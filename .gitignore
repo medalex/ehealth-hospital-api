@@ -1,0 +1,9 @@
+bin/
+obj/
+*.user
+.vs/
+*.db
+*.db-shm
+*.db-wal
+ClientApp/node_modules/
+ClientApp/dist/
