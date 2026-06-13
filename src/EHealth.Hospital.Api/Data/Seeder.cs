@@ -17,7 +17,9 @@ public static class Seeder
             LastName = "Wilson",
             Specialty = "General Practitioner",
             LicenseNumber = "MED-LIC-2024-001",
-            CredentialUal = null  // set after DKG registration
+            // UAL предустановлен — в реальном демо перезаписывается через DKG регистрацию
+            CredentialUal = Environment.GetEnvironmentVariable("SEED_DOCTOR_UAL")
+                            ?? "did:dkg:hardhat2:31337/0x0000000000000000000000000000000000000001/1"
         });
 
         db.AllergyRecords.Add(new AllergyRecord
