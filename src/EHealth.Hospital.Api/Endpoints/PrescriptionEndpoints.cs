@@ -33,9 +33,10 @@ public static class PrescriptionEndpoints
             IHttpClientFactory http, IConfiguration config) =>
         {
             var doctor = await db.Doctors.FindAsync(req.DoctorId);
-            if (doctor is null) return Results.BadRequest("Doctor not found");
+            if (doctor is null)
+                return Results.BadRequest(new { error = "Doctor not found" });
             if (doctor.CredentialUal is null)
-                return Results.BadRequest("Doctor credential not registered on DKG");
+                return Results.BadRequest(new { error = "Doctor credential not registered on DKG" });
 
             // Проверяем consent пациента на доступ госпиталя к его данным
             var orgId = config["HospitalId"] ?? "hospital-1";

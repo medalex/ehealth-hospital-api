@@ -11,6 +11,11 @@
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.0" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.0" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="7.*" />
+    <!-- Override transitive 9.0.0 (build-time, via EFCore.Design → Microsoft.Build.Tasks.Core)
+         to patch NU1903: GHSA-37gx-xxp4-5rgx / GHSA-w3x6-4m5h-cxqf (fixed in 9.0.15+).
+         NU1510: net10 ships this in the shared framework, so the direct ref only affects
+         the restore graph (clearing the vuln warning) — the "unnecessary" notice is expected. -->
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="9.0.17" NoWarn="NU1510" />
   </ItemGroup>
 
 </Project>

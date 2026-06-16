@@ -21,6 +21,15 @@ public static class AllergyEndpoints
         group.MapPost("/", async (AllergyRecord allergy, AppDbContext db,
             IHttpClientFactory http, IConfiguration config) =>
         {
+            if (allergy.PatientId == Guid.Empty)
+                return Results.BadRequest(new { error = "PatientId is required" });
+            if (string.IsNullOrWhiteSpace(allergy.Substance))
+                return Results.BadRequest(new { error = "Substance is required" });
+            if (string.IsNullOrWhiteSpace(allergy.SnomedCode))
+                return Results.BadRequest(new { error = "SnomedCode is required" });
+            if (string.IsNullOrWhiteSpace(allergy.Source))
+                return Results.BadRequest(new { error = "Source is required" });
+
             allergy.Id = Guid.NewGuid();
             allergy.RecordedAt = DateTime.UtcNow;
 

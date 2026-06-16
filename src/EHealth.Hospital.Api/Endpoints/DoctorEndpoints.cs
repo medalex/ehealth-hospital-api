@@ -39,7 +39,9 @@ public static class DoctorEndpoints
 
             var ual = await PublishCredentialToDkg(doctor, http, config);
             if (ual is null)
-                return Results.Problem("Failed to publish credential to DKG");
+                return Results.Json(
+                    new { error = "Failed to publish credential to DKG" },
+                    statusCode: 502);
 
             doctor.CredentialUal = ual;
             await db.SaveChangesAsync();
