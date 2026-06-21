@@ -35,8 +35,6 @@ public static class PrescriptionEndpoints
             var doctor = await db.Doctors.FindAsync(req.DoctorId);
             if (doctor is null)
                 return Results.BadRequest(new { error = "Doctor not found" });
-            if (doctor.CredentialUal is null)
-                return Results.BadRequest(new { error = "Doctor credential not registered on DKG" });
 
             // Проверяем consent пациента на доступ госпиталя к его данным
             var orgId = config["HospitalId"] ?? "hospital-1";
@@ -65,7 +63,7 @@ public static class PrescriptionEndpoints
 
             // Build ZKP proof request
             var proofRequest = new ZkpProveRequest(
-                DoctorCredentialUal: doctor.CredentialUal,
+                DoctorCredentialUal: doctor.CredentialUal ?? string.Empty,
                 DoctorCredentialHash: credProof.CredentialHash,
                 ValidCredentialRoot: credProof.ValidCredentialRoot,
                 CredentialSiblings: credProof.Siblings,
