@@ -263,7 +263,8 @@ public static class PrescriptionEndpoints
 
     // Formula is intentionally omitted: lab-api serializes it as a numeric enum,
     // which broke string deserialization and silently emptied the lab list.
-    private record LabResultDto(
+    // Public so the lab-api JSON contract can be regression-tested.
+    public record LabResultDto(
         string LoincCode, string Metric,
         decimal Value, string Unit, DateTime MeasuredAt);
 
