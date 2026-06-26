@@ -61,6 +61,10 @@ public static class PrescriptionEndpoints
                     new { error = $"Doctor {req.DoctorId} not found in MFSSIA physician registry" },
                     statusCode: 403);
 
+            // Fetch the patient-record Merkle proof from MFSSIA (allergy tree built from DKG,
+            // leaf bound to patientId). Null → prover falls back to the local allergy list.
+            var recordProof = await FetchPatientRecordProof(req.PatientId, http, config);
+
             // Build ZKP proof request
             var proofRequest = new ZkpProveRequest(
                 DoctorCredentialUal: doctor.CredentialUal ?? string.Empty,
@@ -75,6 +79,12 @@ public static class PrescriptionEndpoints
                 WorkflowId: req.WorkflowId,
                 PrescriptionIssuedAt: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 Allergies: allergies.Select(a => a.Substance).ToArray(),
+                Substances: recordProof?.Substances,
+                PatientRecordRoot: recordProof?.PatientRecordRoot,
+                RefLeaf: recordProof?.RefLeaf,
+                RefSiblings: recordProof?.RefSiblings,
+                RefPathBits: recordProof?.RefPathBits,
+                RefIsActive: recordProof?.RefIsActive,
                 LabResults: labResults,
                 Policies: policies
             );
@@ -240,6 +250,22 @@ public static class PrescriptionEndpoints
         catch { return null; }
     }
 
+    // Fetches the patient allergy Merkle proof from MFSSIA (built from DKG allergies,
+    // leaf bound to patientId). Null → prover falls back to the local allergy list.
+    private static async Task<PatientRecordProof?> FetchPatientRecordProof(
+        Guid patientId, IHttpClientFactory http, IConfiguration config)
+    {
+        try
+        {
+            var mfssiaUrl = config["MfssiaUrl"] ?? "http://mfssia-ehealth:4000/api";
+            var client = http.CreateClient();
+            var env = await client.GetFromJsonAsync<PatientRecordEnvelope>(
+                $"{mfssiaUrl}/patient-record/{patientId}/proof");
+            return env?.Data;
+        }
+        catch { return null; }
+    }
+
     private static async Task<ZkpResult?> CallZkpProver(
         ZkpProveRequest req, IHttpClientFactory http, IConfiguration config)
     {
@@ -281,7 +307,16 @@ public static class PrescriptionEndpoints
         string? ValidCredentialRoot, string[]? CredentialSiblings, int[]? CredentialPathBits,
         Guid PatientId, int[] DrugIds, string[] Dosages, int PatientAge, int WorkflowId,
         long PrescriptionIssuedAt,
-        string[] Allergies, LabResultDto[] LabResults, PolicyDto[] Policies);
+        string[] Allergies,
+        string[]? Substances, string? PatientRecordRoot,
+        string[]? RefLeaf, string[][]? RefSiblings, int[][]? RefPathBits, int[]? RefIsActive,
+        LabResultDto[] LabResults, PolicyDto[] Policies);
+
+    private record PatientRecordProof(
+        string[] Substances, string PatientRecordRoot,
+        string[] RefLeaf, string[][] RefSiblings, int[][] RefPathBits, int[] RefIsActive);
+
+    private record PatientRecordEnvelope(PatientRecordProof? Data);
 
     private record ZkpResult(bool Outcome, string StmtHash, object Proof, string[]? PublicSignals);
 }
