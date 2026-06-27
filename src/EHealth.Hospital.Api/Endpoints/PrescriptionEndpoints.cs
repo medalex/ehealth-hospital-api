@@ -69,6 +69,15 @@ public static class PrescriptionEndpoints
                     new { error = "MFSSIA patient-record registry unavailable — cannot anchor patient allergies" },
                     statusCode: 503);
 
+            // Fetch the committed contraindication closure proof from MFSSIA (root +
+            // per-allergy membership for the prescribed drug). Required — the circuit binds
+            // P2 to this root, so the prover cannot fabricate the contraindication.
+            var contra = await FetchContraindicationProofs(recordProof.SubstanceIds, req.DrugId, http, config);
+            if (contra is null)
+                return Results.Json(
+                    new { error = "MFSSIA contraindication registry unavailable" },
+                    statusCode: 503);
+
             // Build ZKP proof request
             var proofRequest = new ZkpProveRequest(
                 DoctorCredentialUal: doctor.CredentialUal ?? string.Empty,
@@ -89,6 +98,8 @@ public static class PrescriptionEndpoints
                 RefSiblings: recordProof.RefSiblings,
                 RefPathBits: recordProof.RefPathBits,
                 RefIsActive: recordProof.RefIsActive,
+                ContraindicationRoot: contra.ContraindicationRoot,
+                ContraProofs: contra.ContraProofs,
                 LabResults: labResults,
                 Policies: policies
             );
@@ -284,6 +295,39 @@ public static class PrescriptionEndpoints
         catch { return null; }
     }
 
+    // Fetches the contraindication-closure root plus a membership proof for each allergy
+    // substance against the prescribed drug, from the MFSSIA contraindication registry.
+    private static async Task<ContraindicationBundle?> FetchContraindicationProofs(
+        int[] substanceIds, int drugId, IHttpClientFactory http, IConfiguration config)
+    {
+        try
+        {
+            var mfssiaUrl = config["MfssiaUrl"] ?? "http://mfssia-ehealth:4000/api";
+            var client = http.CreateClient();
+
+            var rootResp = await client.GetFromJsonAsync<JsonElement>($"{mfssiaUrl}/contraindication/root");
+            if (!rootResp.TryGetProperty("data", out var rootData) ||
+                !rootData.TryGetProperty("contraindicationRoot", out var rootEl))
+                return null;
+            var root = rootEl.GetString()!;
+
+            var proofs = new List<ContraProof>();
+            foreach (var s in substanceIds)
+            {
+                var resp = await client.GetFromJsonAsync<JsonElement>(
+                    $"{mfssiaUrl}/contraindication/proof?substance={s}&drug={drugId}");
+                if (!resp.TryGetProperty("data", out var d) || d.ValueKind != JsonValueKind.Object) return null;
+                proofs.Add(new ContraProof(
+                    Value: d.GetProperty("value").GetInt32(),
+                    Siblings: d.GetProperty("siblings").EnumerateArray().Select(x => x.GetString()!).ToArray(),
+                    PathBits: d.GetProperty("pathBits").EnumerateArray().Select(x => x.GetInt32()).ToArray()
+                ));
+            }
+            return new ContraindicationBundle(root, proofs.ToArray());
+        }
+        catch { return null; }
+    }
+
     private static async Task<ZkpResult?> CallZkpProver(
         ZkpProveRequest req, IHttpClientFactory http, IConfiguration config)
     {
@@ -328,13 +372,19 @@ public static class PrescriptionEndpoints
         string[] Allergies,
         string[]? Substances, string? PatientRecordRoot,
         string[]? RefLeaf, string[][]? RefSiblings, int[][]? RefPathBits, int[]? RefIsActive,
+        string? ContraindicationRoot, ContraProof[]? ContraProofs,
         LabResultDto[] LabResults, PolicyDto[] Policies);
 
     private record PatientRecordProof(
-        string[] Substances, string PatientRecordRoot,
+        string[] Substances, int[] SubstanceIds, string PatientRecordRoot,
         string[] RefLeaf, string[][] RefSiblings, int[][] RefPathBits, int[] RefIsActive);
 
     private record PatientRecordEnvelope(PatientRecordProof? Data);
+
+    // Per-allergy contraindication membership proof (aligned with patient-record substances).
+    private record ContraProof(int Value, string[] Siblings, int[] PathBits);
+
+    private record ContraindicationBundle(string ContraindicationRoot, ContraProof[] ContraProofs);
 
     private record ZkpResult(bool Outcome, string StmtHash, object Proof, string[]? PublicSignals);
 }
