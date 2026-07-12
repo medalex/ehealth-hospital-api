@@ -227,6 +227,7 @@ public static class PrescriptionEndpoints
                     // medication has no dedicated field — extracted from id: "urn:rx:policy:pol:metformin-egfr"
                     var id = GetStr(p, "id").ToLowerInvariant();
                     var med = id.Contains("metformin") ? "metformin"
+                            : id.Contains("amoxicillin") ? "amoxicillin"
                             : id.Contains("penicillin") ? "penicillin"
                             : "";
 
