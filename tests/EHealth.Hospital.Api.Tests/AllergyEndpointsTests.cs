@@ -17,15 +17,20 @@ public class AllergyEndpointsTests : IDisposable
     }
 
     [Fact]
-    public async Task GetAllergies_ReturnsSeededRecord()
+    public async Task GetAllergies_ReturnsRecords()
     {
+        // No allergies are seeded — add one, then read it back.
+        await _client.PostAsJsonAsync("/api/allergies", new AllergyRecord
+        {
+            PatientId = PatientId, Substance = "Penicillin", SnomedCode = "372687004", Source = "St. Mary's Hospital"
+        });
+
         var response = await _client.GetAsync($"/api/allergies/patient/{PatientId}");
 
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
         var records = await response.Content.ReadFromJsonAsync<List<AllergyRecord>>();
         Assert.NotNull(records);
-        Assert.Single(records);
-        Assert.Equal("Penicillin", records[0].Substance);
+        Assert.Contains(records, r => r.Substance == "Penicillin");
     }
 
     [Fact]
@@ -60,11 +65,13 @@ public class AllergyEndpointsTests : IDisposable
     [Fact]
     public async Task DeleteAllergy_KnownId_ReturnsNoContent()
     {
-        var records = await _client.GetFromJsonAsync<List<AllergyRecord>>(
-            $"/api/allergies/patient/{PatientId}");
-        var id = records![0].Id;
+        // Nothing is seeded — create an allergy, then delete it.
+        var created = await (await _client.PostAsJsonAsync("/api/allergies", new AllergyRecord
+        {
+            PatientId = PatientId, Substance = "Aspirin", SnomedCode = "293586001", Source = "St. Mary's Hospital"
+        })).Content.ReadFromJsonAsync<AllergyRecord>();
 
-        var response = await _client.DeleteAsync($"/api/allergies/{id}");
+        var response = await _client.DeleteAsync($"/api/allergies/{created!.Id}");
 
         Assert.Equal(HttpStatusCode.NoContent, response.StatusCode);
     }

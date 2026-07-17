@@ -50,15 +50,7 @@ public static class Seeder
             }
         );
 
-        db.AllergyRecords.Add(new AllergyRecord
-        {
-            Id = Guid.Parse("00000000-0000-0000-0003-000000000001"),
-            PatientId = Pat1,
-            Substance = "Penicillin",
-            SnomedCode = "372687004",
-            Source = "St. Mary's Hospital",
-            RecordedAt = DateTime.UtcNow.AddMonths(-3)
-        });
+        // Only doctors are seeded. Allergies are recorded live during the demo.
 
         db.SaveChanges();
     }
