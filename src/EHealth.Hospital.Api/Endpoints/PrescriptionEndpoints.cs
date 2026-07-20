@@ -48,12 +48,28 @@ public static class PrescriptionEndpoints
                 .Where(a => a.PatientId == req.PatientId)
                 .ToListAsync();
 
+            // Semantic-interoperability gate (terminology): an allergy coded in a lab's local
+            // vocabulary cannot be matched to a governed rx concept without an rx:alignsTo axiom
+            // in theory T. Resolve each non-canonical code via mfssia; a missing alignment is
+            // auto-escalated to the DAO and blocks the prescription until it is voted in.
+            var termConflict = await CheckTerminologyConflicts(allergies, http, config);
+            if (termConflict is not null)
+                return Results.Json(termConflict, statusCode: 409);
+
             // Fetch lab record (root + membership proofs) from the MFSSIA lab-record registry.
             var lab = await FetchLabResults(req.PatientId, http, config);
             if (lab is null)
                 return Results.Json(
                     new { error = "MFSSIA lab-record registry unavailable" },
                     statusCode: 503);
+
+            // Semantic-interoperability gate: the two labs may report the same metric on
+            // different unit scales. Normalise every measurement onto the governed scale
+            // (theory T). If a unit has no numeric bridge, mfssia auto-escalates it to the
+            // DAO and we block the prescription until the bridge is voted in and published.
+            var conflict = await CheckLabConflicts(lab.Results, http, config);
+            if (conflict is not null)
+                return Results.Json(conflict, statusCode: 409);
 
             // Fetch ZKP public params (clinical policies) from mfssia-ehealth
             var policies = await FetchPolicies(http, config);
@@ -130,7 +146,22 @@ public static class PrescriptionEndpoints
             db.Prescriptions.Add(prescription);
             await db.SaveChangesAsync();
 
-            return Results.Created($"/api/prescriptions/{prescription.Id}", prescription);
+            // ZKP acceptance gate. Only an accepted proof yields an *issued* prescription that
+            // may be forwarded to the pharmacy. A rejected decision is still persisted as a
+            // local audit record (its outcome + reasons), but it is NOT issued and must never
+            // reach the pharmacy — the response is 422 so the UI shows it as rejected rather
+            // than as a dispensable prescription.
+            if (prescription.Outcome == true)
+                return Results.Created($"/api/prescriptions/{prescription.Id}", prescription);
+
+            return Results.UnprocessableEntity(new
+            {
+                id = prescription.Id,
+                outcome = false,
+                issued = false,
+                reasons = prescription.Reasons,
+                error = "Prescription rejected by ZKP verification — not issued, not sent to pharmacy.",
+            });
         });
     }
 
@@ -195,13 +226,122 @@ public static class PrescriptionEndpoints
                     Siblings: m.TryGetProperty("siblings", out var sb) && sb.ValueKind == JsonValueKind.Array
                         ? sb.EnumerateArray().Select(x => x.GetString()!).ToArray() : Array.Empty<string>(),
                     PathBits: m.TryGetProperty("pathBits", out var pb) && pb.ValueKind == JsonValueKind.Array
-                        ? pb.EnumerateArray().Select(x => x.GetInt32()).ToArray() : Array.Empty<int>()
+                        ? pb.EnumerateArray().Select(x => x.GetInt32()).ToArray() : Array.Empty<int>(),
+                    Unit: m.TryGetProperty("unit", out var un) ? un.GetString() ?? "" : "",
+                    MeasuredBy: m.TryGetProperty("measuredBy", out var mb) ? mb.GetString() ?? "" : ""
                 )).ToArray()
                 : Array.Empty<LabResultDto>();
 
             return new LabRecordBundle(rootEl.GetString() ?? "", measurements);
         }
         catch { return null; }
+    }
+
+    // Resolves each allergy coded in a non-canonical vocabulary to a governed rx concept via
+    // mfssia. Returns null when all codes align; otherwise returns a conflict payload (the
+    // unaligned code + the DAO proposal mfssia opened) to surface as HTTP 409. SNOMED-CT is
+    // treated as canonical and skipped.
+    private static async Task<object?> CheckTerminologyConflicts(
+        List<AllergyRecord> allergies, IHttpClientFactory http, IConfiguration config)
+    {
+        var mfssiaUrl = config["MfssiaUrl"] ?? "http://mfssia-ehealth:4000/api";
+        var client = http.CreateClient();
+
+        foreach (var a in allergies.Where(x =>
+                     !string.IsNullOrWhiteSpace(x.CodeSystem) &&
+                     !string.Equals(x.CodeSystem, "SNOMED-CT", StringComparison.OrdinalIgnoreCase)))
+        {
+            JsonElement root;
+            try
+            {
+                var resp = await client.PostAsJsonAsync(
+                    $"{mfssiaUrl}/rx-governance/terminology/align",
+                    new { system = a.CodeSystem, code = a.SnomedCode, term = a.Substance });
+                if (resp.IsSuccessStatusCode) continue; // aligns to a governed concept
+                if (resp.StatusCode != System.Net.HttpStatusCode.Conflict) continue;
+                root = await resp.Content.ReadFromJsonAsync<JsonElement>();
+            }
+            catch { continue; } // mfssia hiccup must not spuriously block
+
+            var body = root.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object
+                ? msg : root;
+
+            int? proposalId = null;
+            if (body.TryGetProperty("escalation", out var esc) && esc.ValueKind == JsonValueKind.Object
+                && esc.TryGetProperty("proposalId", out var pid) && pid.ValueKind == JsonValueKind.Number)
+                proposalId = pid.GetInt32();
+
+            return new
+            {
+                error = $"Terminological conflict on allergy '{a.Substance}': code '{a.CodeSystem}:{a.SnomedCode}' has no alignment to a governed concept.",
+                conflict = true,
+                conflictType = "terminology",
+                substance = a.Substance,
+                codeSystem = a.CodeSystem,
+                code = a.SnomedCode,
+                escalatedToDao = proposalId is not null,
+                proposalId,
+                resolution = "Approve the auto-created alignment proposal in the DAO, publish it, then re-issue the prescription.",
+            };
+        }
+
+        return null;
+    }
+
+    // Normalises each lab measurement onto the governed scale via mfssia. Returns null when
+    // every value reconciles; otherwise returns a conflict payload (the metric, the two
+    // reporting labs + units, and the DAO proposal mfssia opened) to surface as HTTP 409.
+    private static async Task<object?> CheckLabConflicts(
+        LabResultDto[] results, IHttpClientFactory http, IConfiguration config)
+    {
+        var mfssiaUrl = config["MfssiaUrl"] ?? "http://mfssia-ehealth:4000/api";
+        var client = http.CreateClient();
+
+        foreach (var m in results.Where(r => !string.IsNullOrWhiteSpace(r.Unit)))
+        {
+            JsonElement root;
+            try
+            {
+                var resp = await client.PostAsJsonAsync(
+                    $"{mfssiaUrl}/rx-governance/bridges/normalize",
+                    new { metric = m.Metric, value = m.Value, unit = m.Unit });
+                if (resp.IsSuccessStatusCode) continue; // reconciles onto the governed scale
+                if (resp.StatusCode != System.Net.HttpStatusCode.Conflict) continue; // other errors don't gate
+                root = await resp.Content.ReadFromJsonAsync<JsonElement>();
+            }
+            catch { continue; } // mfssia hiccup must not spuriously block
+
+            // NestJS ConflictException payload may sit at the top level or under "message".
+            var body = root.TryGetProperty("message", out var msg) && msg.ValueKind == JsonValueKind.Object
+                ? msg : root;
+
+            int? proposalId = null;
+            string? governedUnit = null;
+            if (body.TryGetProperty("escalation", out var esc) && esc.ValueKind == JsonValueKind.Object
+                && esc.TryGetProperty("proposalId", out var pid) && pid.ValueKind == JsonValueKind.Number)
+                proposalId = pid.GetInt32();
+            if (body.TryGetProperty("toUnit", out var tu)) governedUnit = tu.GetString();
+
+            // Name every lab that reported this metric — that is the "two labs disagree" story.
+            var sources = results
+                .Where(r => r.Metric == m.Metric)
+                .Select(r => new { lab = r.MeasuredBy, value = r.Value, unit = r.Unit })
+                .ToArray();
+
+            return new
+            {
+                error = $"Semantic conflict on '{m.Metric}': '{m.Unit}' has no numeric bridge to the governed scale '{governedUnit}'.",
+                conflict = true,
+                metric = m.Metric,
+                governedUnit,
+                reportedBy = sources,
+                escalatedToDao = proposalId is not null,
+                proposalId,
+                resolution = "Approve the auto-created bridge proposal in the DAO, publish it, then re-issue the prescription.",
+            };
+        }
+
+        return null;
     }
 
     private static async Task<PolicyDto[]> FetchPolicies(
@@ -373,7 +513,7 @@ public static class PrescriptionEndpoints
     // Lab measurement + lab-record membership proof from the MFSSIA lab-record registry.
     public record LabResultDto(
         string Metric, string MetricId, decimal Value, DateTime MeasuredAt,
-        string[] Siblings, int[] PathBits);
+        string[] Siblings, int[] PathBits, string Unit = "", string MeasuredBy = "");
 
     private record LabRecordBundle(string LabRecordRoot, LabResultDto[] Results);
 

@@ -81,6 +81,7 @@ public static class AllergyEndpoints
                 literals = new Dictionary<string, string>
                 {
                     ["snomedCode"] = allergy.SnomedCode,
+                    ["codeSystem"] = allergy.CodeSystem,
                 },
                 dateTimes = new Dictionary<string, string>
                 {
