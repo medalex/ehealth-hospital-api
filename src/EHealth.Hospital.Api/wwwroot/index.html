@@ -84,10 +84,6 @@
             <label>Dosage</label>
             <input id="rx-dosage" class="form-control form-control-sm" value="8">
           </div>
-          <div class="col-md-1">
-            <label>Age</label>
-            <input id="rx-age" class="form-control form-control-sm" type="number" value="12">
-          </div>
           <div class="col-md-2">
             <label>Workflow ID</label>
             <input id="rx-wf" class="form-control form-control-sm" type="number" value="77">
@@ -198,7 +194,6 @@ async function createPrescription(){
       patientId: document.getElementById('rx-patient').value,
       drugId: parseInt(document.getElementById('rx-drug').value),
       dosage: document.getElementById('rx-dosage').value,
-      patientAge: parseInt(document.getElementById('rx-age').value),
       workflowId: parseInt(document.getElementById('rx-wf').value),
     });
     const pass = rx.outcome===true;

@@ -108,7 +108,6 @@ public static class PrescriptionEndpoints
                 PatientId: req.PatientId,
                 DrugIds: [req.DrugId],
                 Dosages: [req.Dosage],
-                PatientAge: req.PatientAge,
                 WorkflowId: req.WorkflowId,
                 PrescriptionIssuedAt: DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
                 Allergies: allergies.Select(a => a.Substance).ToArray(),
@@ -508,7 +507,7 @@ public static class PrescriptionEndpoints
     private record CreatePrescriptionRequest(
         Guid DoctorId, Guid PatientId,
         int DrugId, string Dosage,
-        int PatientAge, int WorkflowId);
+        int WorkflowId);
 
     // Lab measurement + lab-record membership proof from the MFSSIA lab-record registry.
     public record LabResultDto(
@@ -528,7 +527,7 @@ public static class PrescriptionEndpoints
     private record ZkpProveRequest(
         string DoctorCredentialUal, string? DoctorCredentialHash,
         string? ValidCredentialRoot, string[]? CredentialSiblings, int[]? CredentialPathBits,
-        Guid PatientId, int[] DrugIds, string[] Dosages, int PatientAge, int WorkflowId,
+        Guid PatientId, int[] DrugIds, string[] Dosages, int WorkflowId,
         long PrescriptionIssuedAt,
         string[] Allergies,
         string[]? Substances, string? PatientRecordRoot,
